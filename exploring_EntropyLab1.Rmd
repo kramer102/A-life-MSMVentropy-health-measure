@@ -1,0 +1,277 @@
+---
+title: "Exploring nonlinearTseries for understanding and the A-life paper"
+author: "Robert Kramer, developed from nonlinearTseries quickstart"
+date: "4/17/2017"
+output: html_document
+---
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+library(ggplot2)
+library(nonlinearTseries)
+library(MSMVSampEn)
+```
+Dale--
+I was going through this while working on my A-life project and thought I would use it. I have commented the requirements (# req) of the lab for easier evaluation. Just find '# req'
+--Robert
+
+```{r code requirements for lab}
+# req 2d and random number (wasn't sure if df with 3 counted)
+a <- matrix(sample.int(10,200, replace = T),ncol = 2)
+
+# req function if else then
+requirement <- function(a){
+  if(a<5){print("low")}
+    else{print("high")}
+  ifelse(a<2,print("really low"),print("not really low"))
+}
+
+
+# req while loop
+i=1
+while(i<10){
+  print(a[i])
+  requirement(a[i])
+  i <- i +1
+}
+# req if,then, else ## I had a bunch, but forgot I found other solutions
+
+```
+```{r}
+# req heading level 1
+```
+# MSE
+
+There are 2 steps
+
+1. Course graining the signal data
+```{r}
+# req math formula
+```
+$$y_j^{(\tau)}=\frac{1}{\tau}\sum_{i=(j-1)\tau+1}^{j\tau} x_i, \qquad 1 \leq j \leq N/\tau$$ 
+
+```{r}
+# fake signal data
+sample.period <- 10000 # have to use 10,000 for corrdim to work, but looks better at like 100
+# req 1d
+sig1 <- rnorm(sample.period)
+
+# random walk
+n = sample.period
+
+# req funcion
+walk <- function(n){
+  x = 0
+  for(i in 2:n){
+    x[i] <- x[i-1]+sample(1,x = c(-1, 1)) 
+  }
+  x <- (x-mean(x))/var(x) # standardization
+  return(x)
+}
+sig2 <- walk(sample.period)
+
+sigs <- data.frame(
+  signal=c(sig1,sig2),
+  type=c(rep("norm",n),rep("walk",n)),
+  step=c(1:n,1:n)
+  )
+
+plt <- ggplot(sigs, aes(x=step,y=signal)) + 
+  geom_point() +
+  facet_grid(type ~ .)
+plt
+# course graining procedure
+
+
+course <- function(sig, tau){
+  y=0
+  i=1
+  for(j in seq(1,round(n/tau))){
+    i <- (j-1)*tau+1
+    y[j] <- mean(sig[seq(i,j*tau)])
+  }
+  return(y)
+}
+
+tau = 4
+t <- course(sig2, tau)
+t <- data.frame(
+  signal=t,
+  type="coarse4",
+  step=seq(1,n,by=tau))
+plot(t$signal)
+
+sigs <- rbind(sigs,t)
+# req plot
+plt <- ggplot(sigs, aes(x=step,y=signal)) + 
+  geom_point() +
+  facet_grid(type ~ .)
+plt
+```
+
+```{r}
+# req heading level 2
+```
+## 2. Sample Entropy
+
+$$SampEn(m,r,N)=-ln \frac{A^m(r)}{B^m(r)}$$
+```{r}
+# req bold and italics
+```
+$A^m(r)=$probability a sequence of length m+1 matches the other sequences of length m+1 withing a **tolerance** of r in a *signal* of N length not including itself
+```{r}
+m <- tau
+r <- .15 # heuristic of .15*sd is typically used, we use standardized values with an sd=1
+N <- n
+############ following nonlinearTquickstart from here just for sig1 --> random normal
+# Using nonlinear T series
+# sig1corr <- corrDim(sig1,2,5,1,.1,r)
+
+```
+
+We need to estimate the embedding dimension $m$ and the time lag $\tau$
+
+```{r tauEstimation}
+# tau-delay estimation based on the mutual information function
+lag.max <- 200
+
+tau.acf1 = timeLag(sig1, technique = "acf", 
+                  lag.max = lag.max, do.plot = T)
+
+tau.ami1 = timeLag(sig1, technique = "ami", 
+                  lag.max =lag.max, do.plot = T)
+
+# tau.acf2 = timeLag(sig2, technique = "acf", 
+#                   lag.max = lag.max, do.plot = T, selection.method = "first.value" ) # doesn't work for this
+
+tau.ami2 = timeLag(sig2, technique = "ami",
+                  lag.max = lag.max, do.plot = T)
+
+```
+
+## using Cao's algorithm to find embedding dim
+"Practical method for determining the minimum embedding dimension of a scalar time series"
+$$y(d)=(x_i, x_{i+\tau}, ...,x_{i+(d-1)\tau})$$
+
+```{r Cao paper}
+x <- sig2 # time series x
+d <- 3 # embedding dimension
+t <- 1 # time delay
+
+# for (1,2,3,4,5,6) d=2, tau = 2
+# y = [[1,3],[2,4],[3,5],[5,6]]
+# y in [1,...,p]
+t.delay.vec <- function(x,d,tau){
+  y = list()
+  p <- length(x)-(d-1)*tau
+  for(i in 1:p){
+    x.seq <- seq(i,i+(d-1)*tau,by=tau)
+    y[[i]] <- x[x.seq]
+  }
+  return(y)
+}
+
+y <- t.delay.vec(x,d,t)
+
+```
+
+```{r mEstimation}
+emb.dim1 = estimateEmbeddingDim(sig1, time.lag = tau.ami1,
+                               max.embedding.dim = 20)
+
+emb.dim2 = estimateEmbeddingDim(sig2, time.lag = tau.ami2,
+                               max.embedding.dim = 20)
+
+```
+
+$E1(d)$ stops changing when $d \geq embedding dimension$ $E2(d)$ is $~1$ for stocastic systems and $~0$ (just not equal to 1 in paper??) for deterministic systems. This is a result of the embedding dimension capturing the underlying couplings of the nonlinear function if they exist. $E2(d)$ is a function of the differences between the ratio of $d+1$ vectors to $d$ vectors.
+
+On to building the takens to attempt to reconstruct the phase space
+```{r buildTakens}
+tak1 = buildTakens(sig1,embedding.dim = emb.dim1, time.lag = tau.ami1)
+plot(tak1[,1])
+# scatter3D(tak[,1], tak[,2], tak[,3],
+#           main = "Lorenz's system reconstructed phase space",
+#           col = 1, type="o",cex = 0.3)
+
+# tak2 = buildTakens(sig2,embedding.dim = emb.dim2, time.lag = tau.ami2)
+# plot(tak2[,1])
+```
+
+# computing nonlinear statistics
+##Lyapunov, Generalized Correlation dimension, Sample entropy
+```{r}
+# req heading bullet and numbered list some are 2 deep
+```
+* heavy computations
+    1. scaling behavior over time --> correlation dimension
+    2. dynamical evolution over time --> Lyapunov exponent
+* Find linear region for statistic
+  * the statistics should be invarient given a high enough embedding dimension
+    * Look for linear behavior of a region in plots to recognize this
+* estimation of invariant is found through a linear regression of previous region
+
+# Correlation Dimension
+The correlation dimension measures the fractal dimension in phase space of a dynamical system.
+* Need to find an invarient region.
+  * typically start with embedding region calculated before and check for like 5 more.
+  * We vary our radius or the $\epsilon$ around the "matching" criteria to potentially compensate for noise. Shouldn't really matter as these systems are essentially noise
+
+
+```{r Correlation Dimension}
+cd1 = corrDim(sig1,
+             min.embedding.dim = emb.dim1,
+             max.embedding.dim = emb.dim1 + 10,
+             time.lag = tau.ami1, 
+             min.radius = 0.001, max.radius = 10,
+             n.points.radius = 10,
+             theiler.window = 1000,
+             do.plot=T)
+plot(cd1)
+
+cd2 = corrDim(sig2,
+             min.embedding.dim = emb.dim2,
+             max.embedding.dim = emb.dim2 + 10,
+             time.lag = tau.ami2, 
+             min.radius = 0.001, max.radius = 100,
+             n.points.radius = 10,
+             theiler.window = 1000,
+             do.plot=FALSE)
+plot(cd2)
+
+# sample entropy
+se1 = sampleEntropy(cd1, do.plot = T)
+se.est1 = estimate(se1, do.plot = F,
+                  regression.range = c(0,4))
+cat("Sample entropy estimate for noise: ", mean(se.est1), "\n")
+
+se2 = sampleEntropy(cd2, do.plot = T)
+se.est2 = estimate(se1, do.plot = F,
+                  regression.range = c(1,10))
+# cat("Sample entropy estimate for walk: ", mean(se.est2), "\n") 
+```
+
+## Max Lyapunov
+```{r}
+# get the sampling period of the lorenz simulation
+# computing the differences of time (all differences should be equal)
+sampling.period = sample.period# diff(lor$time)[1]
+ml1 = maxLyapunov(sig1, 
+                 sampling.period=0.01,
+                 min.embedding.dim = emb.dim1,
+                 max.embedding.dim = emb.dim1 + 3,
+                 time.lag = tau.ami1, 
+                 radius=1,
+                 max.time.steps=1000,
+                 do.plot=FALSE)
+plot(ml1,type="l", xlim = c(0,8))
+ml.est = estimate(ml1, regression.range = c(0,3),
+                  do.plot = T,type="l")
+# cat("expected: 0.906  --- estimate: ", ml1.est,"\n")
+
+```
+
+Noise is not the lorenz system, so that's pretty good.
+The next step is to use my simulation data with this process and compare it to a random walk
+
+
+
+
